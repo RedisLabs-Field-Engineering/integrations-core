@@ -1,7 +1,8 @@
 # (C) Datadog, Inc. 2019-present
 # All rights reserved
 # Licensed under a 3-clause BSD style license (see LICENSE)
-from ..utils import default_option_example, normalize_source_name
+from ..utils import normalize_source_name
+from .utils import default_option_example
 
 
 def spec_validator(spec, loader):

@@ -15,7 +15,7 @@ from os.path import basename
 from typing import TYPE_CHECKING, Any, AnyStr, Callable, Deque, Dict, List, Optional, Sequence, Tuple, Union
 
 import yaml
-from six import binary_type, iteritems, text_type
+from six import PY2, binary_type, iteritems, text_type
 
 from ..config import is_affirmative
 from ..constants import ServiceCheck
@@ -241,8 +241,15 @@ class AgentCheck(object):
         # Setup metric limits
         self.metric_limiter = self._get_metric_limiter(self.name, instance=self.instance)
 
+        # Lazily load and validate config
+        self.__config = None
+        self.__shared_config = None
+
         # Functions that will be called exactly once (if successful) before the first check run
         self.check_initializations = deque([self.send_config_metadata])  # type: Deque[Callable[[], None]]
+
+        if not PY2:
+            self.check_initializations.append(self.load_configuration_models)
 
     def _get_metric_limiter(self, name, instance=None):
         # type: (str, InstanceType) -> Optional[Limiter]
@@ -363,6 +370,36 @@ class AgentCheck(object):
         # type: () -> bool
         self._log_deprecation('in_developer_mode')
         return False
+
+    @property
+    def config(self):
+        return self.__config
+
+    @property
+    def shared_config(self):
+        return self.__shared_config
+
+    def load_configuration_models(self):
+        # 'datadog_checks.<PACKAGE>.<MODULE>...'
+        module_parts = self.__module__.split('.')
+        package_path = '{}.models'.format('.'.join(module_parts[:2]))
+
+        try:
+            package = importlib.import_module(package_path)
+        except ModuleNotFoundError as e:  # type: ignore
+            # Don't fail if there are no models
+            if str(e) == 'No module named {!r}'.format(package_path):
+                return
+
+            raise
+
+        config_model = getattr(package, 'InstanceConfig', None)
+        if config_model is not None:
+            self.__config = config_model(**copy.deepcopy(self.instance))
+
+        shared_config_model = getattr(package, 'SharedConfig', None)
+        if shared_config_model is not None:
+            self.__shared_config = shared_config_model(**copy.deepcopy(self.init_config))
 
     def register_secret(self, secret):
         # type: (str) -> None

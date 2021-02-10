@@ -9,12 +9,15 @@ from typing import Any
 
 import mock
 import pytest
+from immutables import Map
 from six import PY3
 
 from datadog_checks.base import AgentCheck
 from datadog_checks.base import __version__ as base_package_version
 from datadog_checks.base import to_native_string
 from datadog_checks.base.checks.base import datadog_agent
+
+from .utils import requires_py3
 
 
 def test_instance():
@@ -840,3 +843,31 @@ class TestCheckInitializations:
         check.run()
 
         assert check.initialize.call_count == 2
+
+
+@requires_py3
+def test_load_configuration_models(dd_run_check, mocker):
+    instance = {'endpoint': 'url', 'tags': ['foo:bar'], 'proxy': {'http': 'http://1.2.3.4:9000'}}
+    init_config = {'proxy': {'https': 'https://1.2.3.4:4242'}}
+    check = AgentCheck('test', init_config, [instance])
+    check.check_id = 'test:123'
+    check.check = lambda _: None
+
+    assert check.config is None
+    assert check.shared_config is None
+
+    config_model = {'endpoint': 'url', 'tags': ('foo:bar',), 'proxy': Map(http='http://1.2.3.4:9000')}
+    shared_config_model = {'proxy': Map(https='https://1.2.3.4:4242')}
+    package = mocker.MagicMock()
+    package.InstanceConfig = mocker.MagicMock(return_value=config_model)
+    package.SharedConfig = mocker.MagicMock(return_value=shared_config_model)
+    import_module = mocker.patch('importlib.import_module', return_value=package)
+
+    dd_run_check(check)
+
+    import_module.assert_called_once_with('datadog_checks.base.models')
+    package.InstanceConfig.assert_called_once_with(**config_model)
+    package.SharedConfig.assert_called_once_with(**shared_config_model)
+
+    assert check.config is config_model
+    assert check.shared_config is shared_config_model
